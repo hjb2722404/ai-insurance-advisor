@@ -7,8 +7,78 @@
       <text class="header-subtitle">请填写您和家人的信息，AI将为您推荐最适合的保险方案</text>
     </view>
 
-    <!-- Form Section -->
-    <view class="form-section">
+    <!-- Loading Indicator -->
+    <view v-if="isLoading" class="loading-overlay">
+      <view class="loading-content">
+        <text class="loading-text">AI分析中，请稍候...</text>
+      </view>
+    </view>
+
+    <!-- Results Section (shown after successful submission) -->
+    <view v-if="isSuccessful" class="results-section">
+      <view class="results-header">
+        <text class="results-title">AI保险建议</text>
+        <view class="close-btn" @tap="handleReset">
+          <text class="close-text">重新咨询</text>
+        </view>
+      </view>
+
+      <!-- Recommendations List -->
+      <view class="result-group">
+        <text class="result-group-title">推荐保险方案</text>
+        <view
+          v-for="(rec, index) in recommendations"
+          :key="index"
+          class="recommendation-card"
+          :class="`priority-${rec.priority || 'medium'}`"
+        >
+          <view class="rec-header">
+            <text class="rec-type">{{ rec.insurance_type }}</text>
+            <view v-if="rec.priority" class="priority-badge" :class="rec.priority">
+              <text class="priority-text">{{ getPriorityLabel(rec.priority) }}</text>
+            </view>
+          </view>
+          <text class="rec-coverage">建议保额：{{ rec.recommended_coverage }}</text>
+          <text class="rec-reason">{{ rec.reason }}</text>
+        </view>
+      </view>
+
+      <!-- Reasoning -->
+      <view v-if="reasoning" class="result-group">
+        <text class="result-group-title">分析说明</text>
+        <view class="reasoning-card">
+          <text class="reasoning-text">{{ reasoning }}</text>
+        </view>
+      </view>
+
+      <!-- Estimated Premium -->
+      <view v-if="estimatedPremium" class="result-group">
+        <text class="result-group-title">预估保费</text>
+        <view class="premium-card">
+          <text class="premium-amount">{{ estimatedPremium }}</text>
+        </view>
+      </view>
+
+      <!-- Next Steps -->
+      <view v-if="nextSteps.length > 0" class="result-group">
+        <text class="result-group-title">下一步建议</text>
+        <view class="steps-card">
+          <view
+            v-for="(step, index) in nextSteps"
+            :key="index"
+            class="step-item"
+          >
+            <view class="step-bullet">
+              <text class="step-number">{{ index + 1 }}</text>
+            </view>
+            <text class="step-text">{{ step }}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- Form Section (hidden when showing results) -->
+    <view v-else class="form-section">
       <!-- Basic Information -->
       <view class="form-group">
         <text class="group-title">基本信息</text>
@@ -18,9 +88,9 @@
           <text class="label">姓名 <text class="required">*</text></text>
           <input
             class="input"
-            v-model="formData.name"
+            :value="formData.name"
+            @input="(e: any) => handleInputChange('name', e.detail.value)"
             placeholder="请输入您的姓名"
-            @input="validateField('name')"
           />
           <text v-if="errors.name" class="error-text">{{ errors.name }}</text>
         </view>
@@ -30,10 +100,10 @@
           <text class="label">年龄 <text class="required">*</text></text>
           <input
             class="input"
-            v-model="formData.age"
+            :value="formData.age"
+            @input="(e: any) => handleInputChange('age', e.detail.value)"
             type="number"
             placeholder="请输入您的年龄"
-            @input="validateField('age')"
           />
           <text v-if="errors.age" class="error-text">{{ errors.age }}</text>
         </view>
@@ -65,7 +135,8 @@
           <text class="label">职业</text>
           <input
             class="input"
-            v-model="formData.occupation"
+            :value="formData.occupation"
+            @input="(e: any) => handleInputChange('occupation', e.detail.value)"
             placeholder="请输入您的职业"
           />
         </view>
@@ -75,10 +146,10 @@
           <text class="label">年收入（万元） <text class="required">*</text></text>
           <input
             class="input"
-            v-model="formData.annualIncome"
+            :value="formData.annualIncome"
+            @input="(e: any) => handleInputChange('annualIncome', e.detail.value)"
             type="digit"
             placeholder="请输入您的年收入"
-            @input="validateField('annualIncome')"
           />
           <text v-if="errors.annualIncome" class="error-text">{{ errors.annualIncome }}</text>
         </view>
@@ -129,10 +200,12 @@
           <text class="label">被抚养人数</text>
           <input
             class="input"
-            v-model="formData.dependents"
+            :value="formData.dependents"
+            @input="(e: any) => handleInputChange('dependents', e.detail.value)"
             type="number"
             placeholder="请输入需要抚养的人数（包括子女、老人等）"
           />
+          <text v-if="errors.dependents" class="error-text">{{ errors.dependents }}</text>
         </view>
       </view>
 
@@ -145,7 +218,8 @@
           <text class="label">健康状况</text>
           <textarea
             class="textarea"
-            v-model="formData.healthConditions"
+            :value="formData.healthConditions"
+            @input="(e: any) => handleInputChange('healthConditions', e.detail.value)"
             placeholder="请描述您或家人的健康状况，如有慢性病、既往病史等请说明"
             :maxlength="500"
           />
@@ -157,7 +231,8 @@
           <text class="label">已有保险</text>
           <textarea
             class="textarea"
-            v-model="formData.existingInsurance"
+            :value="formData.existingInsurance"
+            @input="(e: any) => handleInputChange('existingInsurance', e.detail.value)"
             placeholder="请列出您已购买的保险及保额，如：寿险50万、重疾险30万等"
             :maxlength="500"
           />
@@ -170,10 +245,10 @@
     <view class="submit-section">
       <view
         class="submit-btn"
-        :class="{ disabled: !isFormValid || isSubmitting }"
+        :class="{ disabled: !isFormValid || isLoading }"
         @tap="handleSubmit"
       >
-        <text v-if="!isSubmitting" class="submit-text">获取AI保险建议</text>
+        <text v-if="!isLoading" class="submit-text">获取AI保险建议</text>
         <text v-else class="submit-text">提交中...</text>
       </view>
     </view>
@@ -187,49 +262,46 @@
  * This page collects user and family information for AI-powered insurance recommendations.
  * Fields include: name, age, gender, occupation, annual income, marital status,
  * number of dependents, health conditions, and existing insurance coverage.
+ *
+ * After submission, displays AI-generated insurance recommendations.
  */
 import { onReady } from '@dcloudio/uni-app'
-import { ref, computed } from 'vue'
+import { useConsultationStore } from '@/stores/consultation'
+import { storeToRefs } from 'pinia'
+import type { Priority } from '@/types/insurance'
 
 /**
- * Form data interface
+ * Initialize consultation store
  */
-interface ConsultationFormData {
-  name: string
-  age: string
-  gender: 'male' | 'female' | ''
-  occupation: string
-  annualIncome: string
-  maritalStatus: 'single' | 'married' | 'divorced' | 'widowed' | ''
-  dependents: string
-  healthConditions: string
-  existingInsurance: string
-}
+const consultationStore = useConsultationStore()
 
 /**
- * Form data state
+ * Extract reactive state and getters from store
  */
-const formData = ref<ConsultationFormData>({
-  name: '',
-  age: '',
-  gender: '',
-  occupation: '',
-  annualIncome: '',
-  maritalStatus: '',
-  dependents: '',
-  healthConditions: '',
-  existingInsurance: ''
-})
+const {
+  formData,
+  errors,
+  isLoading,
+  isFormValid,
+  isSuccessful,
+  recommendations,
+  reasoning,
+  estimatedPremium,
+  nextSteps,
+} = storeToRefs(consultationStore)
 
 /**
- * Validation errors state
+ * Extract actions from store (non-reactive)
  */
-const errors = ref<Record<string, string>>({})
-
-/**
- * Submitting state
- */
-const isSubmitting = ref(false)
+const {
+  setField,
+  setGender,
+  setMaritalStatus,
+  validateField,
+  validateForm,
+  submitConsultationRequest,
+  resetForm,
+} = consultationStore
 
 /**
  * Page lifecycle - triggered when page is ready
@@ -241,149 +313,65 @@ onReady(() => {
 })
 
 /**
- * Validate individual field
+ * Get priority label in Chinese
  */
-const validateField = (field: string): boolean => {
-  errors.value[field] = ''
-
-  switch (field) {
-    case 'name':
-      if (!formData.value.name.trim()) {
-        errors.value.name = '请输入姓名'
-        return false
-      }
-      if (formData.value.name.trim().length < 2) {
-        errors.value.name = '姓名至少需要2个字符'
-        return false
-      }
-      break
-
-    case 'age':
-      if (!formData.value.age) {
-        errors.value.age = '请输入年龄'
-        return false
-      }
-      const age = parseInt(formData.value.age)
-      if (isNaN(age) || age < 0 || age > 120) {
-        errors.value.age = '请输入有效的年龄（0-120岁）'
-        return false
-      }
-      break
-
-    case 'annualIncome':
-      if (!formData.value.annualIncome.trim()) {
-        errors.value.annualIncome = '请输入年收入'
-        return false
-      }
-      const income = parseFloat(formData.value.annualIncome)
-      if (isNaN(income) || income < 0) {
-        errors.value.annualIncome = '请输入有效的年收入'
-        return false
-      }
-      break
+const getPriorityLabel = (priority: Priority): string => {
+  const labels: Record<Priority, string> = {
+    high: '高优先级',
+    medium: '中优先级',
+    low: '低优先级',
   }
-
-  return true
+  return labels[priority] || '推荐'
 }
 
 /**
- * Validate all form fields
+ * Handle input field changes
  */
-const validateForm = (): boolean => {
-  let isValid = true
-
-  // Validate required fields
-  if (!validateField('name')) isValid = false
-  if (!validateField('age')) isValid = false
-  if (!validateField('annualIncome')) isValid = false
-
-  if (!formData.value.gender) {
-    errors.value.gender = '请选择性别'
-    isValid = false
-  } else {
-    delete errors.value.gender
-  }
-
-  if (!formData.value.maritalStatus) {
-    errors.value.maritalStatus = '请选择婚姻状况'
-    isValid = false
-  } else {
-    delete errors.value.maritalStatus
-  }
-
-  return isValid
+const handleInputChange = (field: keyof typeof formData.value, value: string) => {
+  setField(field, value)
+  validateField(field)
 }
-
-/**
- * Check if form is valid
- */
-const isFormValid = computed(() => {
-  return (
-    formData.value.name.trim() &&
-    formData.value.age &&
-    formData.value.gender &&
-    formData.value.annualIncome.trim() &&
-    formData.value.maritalStatus
-  )
-})
 
 /**
  * Select gender
  */
 const selectGender = (gender: 'male' | 'female') => {
-  formData.value.gender = gender
-  delete errors.value.gender
+  setGender(gender)
 }
 
 /**
  * Select marital status
  */
 const selectMaritalStatus = (status: 'single' | 'married' | 'divorced' | 'widowed') => {
-  formData.value.maritalStatus = status
-  delete errors.value.maritalStatus
+  setMaritalStatus(status)
 }
 
 /**
  * Handle form submission
  */
 const handleSubmit = async () => {
-  // Validate form
-  if (!validateForm()) {
-    uni.showToast({
-      title: '请检查表单填写',
-      icon: 'none',
-      duration: 2000
-    })
-    return
-  }
-
-  isSubmitting.value = true
-
   try {
-    // TODO: Integrate with backend API
-    // For now, simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    // Show success message
-    uni.showToast({
-      title: '提交成功',
-      icon: 'success',
-      duration: 2000
-    })
-
-    // TODO: Navigate to results page
-    // uni.navigateTo({
-    //   url: '/pages/consultation/result'
-    // })
+    await submitConsultationRequest()
   } catch (error) {
-    uni.showToast({
-      title: '提交失败，请重试',
-      icon: 'none',
-      duration: 2000
-    })
-  } finally {
-    isSubmitting.value = false
+    // Error is already handled by the store (toast shown)
+    // Just log for debugging
+    console.error('Submission failed:', error)
   }
+}
+
+/**
+ * Handle reset form (for new consultation)
+ */
+const handleReset = () => {
+  uni.showModal({
+    title: '重新咨询',
+    content: '确定要重新开始咨询吗？当前结果将被清空。',
+    success: (res) => {
+      if (res.confirm) {
+        resetForm()
+      }
+    },
+  })
 }
 </script>
 
@@ -583,5 +571,231 @@ const handleSubmit = async () => {
   font-size: 32rpx;
   font-weight: 500;
   color: #ffffff;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.loading-content {
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  padding: 60rpx 80rpx;
+  text-align: center;
+}
+
+.loading-text {
+  font-size: 28rpx;
+  color: #333333;
+  font-weight: 500;
+}
+
+/* Results Section */
+.results-section {
+  padding: 30rpx;
+  padding-bottom: 120rpx;
+}
+
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30rpx;
+}
+
+.results-title {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.close-btn {
+  padding: 12rpx 24rpx;
+  background: linear-gradient(135deg, #667eea 0%, #4a90e2 100%);
+  border-radius: 8rpx;
+}
+
+.close-text {
+  font-size: 26rpx;
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.result-group {
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  padding: 30rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.05);
+}
+
+.result-group-title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 24rpx;
+}
+
+/* Recommendation Card */
+.recommendation-card {
+  background: linear-gradient(135deg, #f6f8fb 0%, #ffffff 100%);
+  border-radius: 12rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  border-left: 6rpx solid #4a90e2;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+
+  &.priority-high {
+    border-left-color: #ff4d4f;
+    background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%);
+  }
+
+  &.priority-medium {
+    border-left-color: #faad14;
+    background: linear-gradient(135deg, #fffbe6 0%, #ffffff 100%);
+  }
+
+  &.priority-low {
+    border-left-color: #52c41a;
+    background: linear-gradient(135deg, #f6ffed 0%, #ffffff 100%);
+  }
+}
+
+.rec-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.rec-type {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.priority-badge {
+  padding: 6rpx 16rpx;
+  border-radius: 6rpx;
+  font-size: 22rpx;
+  font-weight: 500;
+
+  &.high {
+    background-color: #ff4d4f;
+    color: #ffffff;
+  }
+
+  &.medium {
+    background-color: #faad14;
+    color: #ffffff;
+  }
+
+  &.low {
+    background-color: #52c41a;
+    color: #ffffff;
+  }
+}
+
+.priority-text {
+  font-size: 22rpx;
+}
+
+.rec-coverage {
+  display: block;
+  font-size: 26rpx;
+  color: #4a90e2;
+  font-weight: 500;
+  margin-bottom: 12rpx;
+}
+
+.rec-reason {
+  display: block;
+  font-size: 26rpx;
+  color: #666666;
+  line-height: 1.6;
+}
+
+/* Reasoning Card */
+.reasoning-card {
+  background-color: #f6f8fb;
+  border-radius: 12rpx;
+  padding: 24rpx;
+}
+
+.reasoning-text {
+  font-size: 26rpx;
+  color: #333333;
+  line-height: 1.6;
+}
+
+/* Premium Card */
+.premium-card {
+  background: linear-gradient(135deg, #667eea 0%, #4a90e2 100%);
+  border-radius: 12rpx;
+  padding: 30rpx;
+  text-align: center;
+}
+
+.premium-amount {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+/* Steps Card */
+.steps-card {
+  background-color: #f6f8fb;
+  border-radius: 12rpx;
+  padding: 24rpx;
+}
+
+.step-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 20rpx;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.step-bullet {
+  flex-shrink: 0;
+  width: 40rpx;
+  height: 40rpx;
+  background: linear-gradient(135deg, #667eea 0%, #4a90e2 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 16rpx;
+}
+
+.step-number {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.step-text {
+  flex: 1;
+  font-size: 26rpx;
+  color: #333333;
+  line-height: 1.6;
+  padding-top: 6rpx;
 }
 </style>
