@@ -227,18 +227,159 @@ class AIService:
         """
         Analyze insurance contract text and extract key information.
 
-        This method will be implemented in subtask-2-3.
+        Uses OpenAI API to analyze contract content and provide structured
+        interpretation of key terms, coverage details, exclusions, and
+        important clauses.
 
         Args:
             contract_text: Extracted text from insurance contract PDF.
 
         Returns:
-            Dictionary containing contract analysis results.
+            Dictionary containing contract analysis results with keys:
+            - summary: Brief overview of the contract
+            - key_terms: List of important terms and definitions
+            - coverage_details: Coverage scope and limits
+            - exclusions: List of exclusions and exceptions
+            - obligations: Policyholder obligations
+            - important_clauses: Notable clauses requiring attention
+            - recommendations: Important points to consider
 
         Raises:
-            NotImplementedError: This method is not yet implemented.
+            ValueError: If API call fails or returns invalid response.
         """
-        raise NotImplementedError("interpret_contract will be implemented in subtask-2-3")
+        # System prompt for contract analysis
+        system_prompt = """你是一位专业的保险合同分析专家，擅长解读各类保险合同的条款和内容。
+
+你的职责：
+1. 仔细分析用户提供的保险合同文本，提取关键信息
+2. 用清晰易懂的语言解释专业术语和条款
+3. 识别合同中的重要条款、保障范围、免责条款等
+4. 指出合同中需要注意的重点和潜在风险点
+5. 为用户提供客观、专业的合同解读
+
+分析结构要求：
+请按以下结构返回分析结果（使用JSON格式）：
+
+{
+  "summary": "合同简要概述，包括保险类型、投保人、被保险人、保险金额等基本信息",
+  "key_terms": [
+    {"term": "术语名称", "definition": "术语解释"}
+  ],
+  "coverage_details": {
+    "scope": "保障范围描述",
+    "coverage_amount": "保险金额/保额",
+    "coverage_period": "保险期间",
+    "beneficiaries": "受益人信息"
+  },
+  "exclusions": [
+    {"item": "免责/除外责任项目", "description": "详细说明"}
+  ],
+  "obligations": [
+    {"obligation": "义务项", "description": "具体说明"}
+  ],
+  "important_clauses": [
+    {"clause": "条款名称", "content": "条款内容摘要", "importance": "重要性说明"}
+  ],
+  "recommendations": [
+    {"point": "注意事项或建议", "reason": "原因说明"}
+  ]
+}
+
+注意事项：
+- 如果合同文本不完整或难以识别某些内容，请在相应部分注明
+- 保持分析客观中立，不偏向保险公司或投保人任何一方
+- 对于免责条款要特别关注并明确指出
+- 如果发现合同中存在不合理或异常条款，请在recommendations中重点说明
+- 确保返回的是有效的JSON格式"""
+
+        # User prompt with contract text
+        user_prompt = f"""请分析以下保险合同文本，并提供详细的解读：
+
+【保险合同文本】
+{contract_text}
+
+请按照指定的JSON格式返回分析结果。"""
+
+        try:
+            # Call OpenAI API
+            response = self._client.chat.completions.create(
+                model=self.interpretation_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,  # Lower temperature for more consistent structured output
+                max_tokens=4000,
+            )
+
+            # Extract the AI-generated analysis
+            analysis = response.choices[0].message.content
+
+            if not analysis:
+                raise ValueError("AI service returned empty response")
+
+            # Parse the JSON response
+            import json
+
+            # Try to extract JSON from the response (in case there's extra text)
+            analysis_json = self._extract_json_from_response(analysis)
+
+            return analysis_json
+
+        except (APIError, APIConnectionError, RateLimitError) as e:
+            error_message = self._handle_api_error(e)
+            raise ValueError(error_message) from e
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse AI response as JSON: {str(e)}") from e
+        except Exception as e:
+            error_message = self._handle_api_error(e)
+            raise ValueError(error_message) from e
+
+    def _extract_json_from_response(self, response: str) -> dict:
+        """
+        Extract JSON from AI response, handling potential extra text.
+
+        Args:
+            response: The raw response string from the AI.
+
+        Returns:
+            Parsed dictionary from JSON content.
+
+        Raises:
+            ValueError: If no valid JSON is found in the response.
+        """
+        import json
+        import re
+
+        # First, try to parse the entire response as JSON
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            pass
+
+        # If that fails, try to extract JSON using regex
+        # Look for content between ```json and ``` markers
+        json_pattern = r'```json\s*(.*?)\s*```'
+        matches = re.findall(json_pattern, response, re.DOTALL)
+        if matches:
+            try:
+                return json.loads(matches[0])
+            except json.JSONDecodeError:
+                pass
+
+        # Try to find content between { and } (assuming JSON object)
+        brace_pattern = r'\{.*\}'
+        matches = re.findall(brace_pattern, response, re.DOTALL)
+        if matches:
+            try:
+                # Get the largest match (most likely to be complete JSON)
+                largest_match = max(matches, key=len)
+                return json.loads(largest_match)
+            except json.JSONDecodeError:
+                pass
+
+        # If all attempts fail, raise an error
+        raise ValueError("No valid JSON found in AI response")
 
     def _handle_api_error(self, error: Exception) -> str:
         """
