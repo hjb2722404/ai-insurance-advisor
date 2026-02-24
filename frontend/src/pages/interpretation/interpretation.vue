@@ -13,7 +13,7 @@
         <view class="upload-icon">📄</view>
         <text class="upload-title">上传保险合同</text>
         <text class="upload-description"
-          >支持图片格式（JPG、PNG）和PDF格式，文件大小不超过10MB</text
+          >支持PDF格式，文件大小不超过10MB</text
         >
 
         <!-- File Upload Button -->
@@ -263,7 +263,7 @@ const chooseFile = () => {
   uni.chooseMessageFile({
     count: 1,
     type: 'file',
-    extension: ['jpg', 'jpeg', 'png', 'pdf'],
+    extension: ['pdf'],
     success: (res) => {
       const file = res.tempFiles[0]
       handleFileSelection(file)

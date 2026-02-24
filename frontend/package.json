@@ -7,7 +7,10 @@
     "dev:mp-weixin": "uni build --watch --mode development --platform mp-weixin",
     "build:h5": "uni build --mode production --platform h5",
     "build:mp-weixin": "uni build --mode production --platform mp-weixin",
-    "type-check": "vue-tsc --noEmit"
+    "type-check": "vue-tsc --noEmit",
+    "test:unit": "vitest",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest --coverage"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-4020920240930001",
@@ -24,10 +27,15 @@
     "@dcloudio/uni-cli-shared": "3.0.0-4020920240930001",
     "@dcloudio/uni-vite-plugin": "3.0.0-4020920240930001",
     "@dcloudio/vite-plugin-uni": "3.0.0-4020920240930001",
+    "@playwright/test": "^1.40.0",
     "@types/node": "^20.11.24",
+    "@vue/test-utils": "^2.4.0",
     "@vue/tsconfig": "^0.5.1",
+    "@vitest/ui": "^1.0.0",
+    "jsdom": "^23.0.0",
     "typescript": "^5.3.3",
     "vite": "5.1.4",
+    "vitest": "^1.0.0",
     "vue-tsc": "^2.0.6"
   },
   "engines": {
