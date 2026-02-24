@@ -29,7 +29,7 @@
               <text class="file-name">{{ uploadedFile.name }}</text>
               <text class="file-size">{{ formatFileSize(uploadedFile.size) }}</text>
             </view>
-            <view class="file-remove" @tap="removeFile">
+            <view class="file-remove" @tap="handleRemoveFile">
               <text class="remove-icon">×</text>
             </view>
           </view>
@@ -40,113 +40,146 @@
       <view
         v-if="uploadedFile"
         class="analyze-btn"
-        :class="{ disabled: isAnalyzing }"
+        :class="{ disabled: isLoading }"
         @tap="handleAnalyze"
       >
-        <text v-if="!isAnalyzing" class="analyze-text">开始解读</text>
+        <text v-if="!isLoading" class="analyze-text">开始解读</text>
         <text v-else class="analyze-text">分析中...</text>
       </view>
     </view>
 
     <!-- Results Section -->
-    <view v-if="analysisResult" class="results-section">
+    <view v-if="isSuccessful && interpretationResult" class="results-section">
       <view class="results-card">
         <view class="results-header">
           <text class="results-title">解读结果</text>
           <view class="results-icon">✨</view>
         </view>
 
-        <!-- Policy Overview -->
-        <view class="result-group">
-          <text class="result-group-title">保单概览</text>
+        <!-- Summary -->
+        <view v-if="interpretationResult.summary" class="result-group">
+          <text class="result-group-title">合同概要</text>
           <view class="result-content">
-            <view class="result-item">
-              <text class="result-label">保险产品名称</text>
-              <text class="result-value">{{ analysisResult.productName || '暂无信息' }}</text>
-            </view>
-            <view class="result-item">
-              <text class="result-label">保险公司</text>
-              <text class="result-value">{{ analysisResult.company || '暂无信息' }}</text>
-            </view>
-            <view class="result-item">
-              <text class="result-label">保险类型</text>
-              <text class="result-value">{{ analysisResult.type || '暂无信息' }}</text>
-            </view>
+            <text class="summary-text">{{ interpretationResult.summary }}</text>
           </view>
         </view>
 
-        <!-- Coverage Details -->
-        <view class="result-group">
-          <text class="result-group-title">保障内容</text>
+        <!-- Key Terms -->
+        <view v-if="keyTerms.length > 0" class="result-group">
+          <text class="result-group-title">重要条款</text>
           <view class="result-content">
             <view
-              v-for="(coverage, index) in analysisResult.coverages"
+              v-for="(term, index) in keyTerms"
               :key="index"
-              class="coverage-item"
+              class="term-item"
+              :class="`importance-${term.importance || 'medium'}`"
             >
-              <text class="coverage-title">{{ coverage.title }}</text>
-              <text class="coverage-description">{{ coverage.description }}</text>
-              <text v-if="coverage.amount" class="coverage-amount"
-                >保额：{{ coverage.amount }}</text
-              >
+              <view class="term-header">
+                <text class="term-name">{{ term.term }}</text>
+                <view v-if="term.importance" class="importance-badge" :class="term.importance">
+                  <text class="importance-text">{{ getImportanceLabel(term.importance) }}</text>
+                </view>
+              </view>
+              <text class="term-explanation">{{ term.explanation }}</text>
             </view>
-            <text v-if="!analysisResult.coverages?.length" class="empty-text"
-              >暂无保障信息</text
-            >
+            <text v-if="!keyTerms.length" class="empty-text">暂无条款信息</text>
           </view>
         </view>
 
-        <!-- Claim Conditions -->
-        <view class="result-group">
-          <text class="result-group-title">理赔条件</text>
+        <!-- Activation Conditions -->
+        <view v-if="activationConditions.length > 0" class="result-group">
+          <text class="result-group-title">保障生效条件</text>
           <view class="result-content">
             <view
-              v-for="(condition, index) in analysisResult.claimConditions"
+              v-for="(condition, index) in activationConditions"
               :key="index"
               class="condition-item"
             >
-              <text class="condition-icon">•</text>
-              <text class="condition-text">{{ condition }}</text>
+              <view class="condition-header">
+                <text class="condition-icon">📋</text>
+                <text class="condition-name">{{ condition.condition }}</text>
+              </view>
+              <text class="condition-description">{{ condition.description }}</text>
+              <view v-if="condition.required_documents?.length" class="required-docs">
+                <text class="docs-label">所需材料：</text>
+                <text
+                  v-for="(doc, docIndex) in condition.required_documents"
+                  :key="docIndex"
+                  class="doc-item"
+                >
+                  {{ doc }}<template v-if="docIndex < condition.required_documents!.length - 1"
+                    >、</template
+                  >
+                </text>
+              </view>
             </view>
-            <text v-if="!analysisResult.claimConditions?.length" class="empty-text"
-              >暂无理赔条件信息</text
+            <text v-if="!activationConditions.length" class="empty-text"
+              >暂无生效条件信息</text
             >
           </view>
         </view>
 
-        <!-- Exclusions -->
-        <view class="result-group">
-          <text class="result-group-title">责任免除</text>
+        <!-- Payout Details -->
+        <view v-if="payoutDetails" class="result-group">
+          <text class="result-group-title">赔付详情</text>
           <view class="result-content">
-            <view
-              v-for="(exclusion, index) in analysisResult.exclusions"
-              :key="index"
-              class="exclusion-item"
-            >
-              <text class="exclusion-icon">⚠️</text>
-              <text class="exclusion-text">{{ exclusion }}</text>
+            <view class="payout-item">
+              <text class="payout-label">赔付方式</text>
+              <text class="payout-value">{{ payoutDetails.payout_method }}</text>
             </view>
-            <text v-if="!analysisResult.exclusions?.length" class="empty-text"
-              >暂无免责条款信息</text
+            <view class="payout-item">
+              <text class="payout-label">赔付金额</text>
+              <text class="payout-value">{{ payoutDetails.payout_amount }}</text>
+            </view>
+            <view class="payout-item">
+              <text class="payout-label">赔付时效</text>
+              <text class="payout-value">{{ payoutDetails.payout_timeline }}</text>
+            </view>
+            <view
+              v-if="payoutDetails.limitations?.length"
+              class="payout-limitations"
             >
+              <text class="limitations-label">限制条件：</text>
+              <view
+                v-for="(limitation, index) in payoutDetails.limitations"
+                :key="index"
+                class="limitation-item"
+              >
+                <text class="limitation-text">{{ limitation }}</text>
+              </view>
+            </view>
           </view>
         </view>
 
         <!-- Important Notes -->
-        <view class="result-group">
+        <view v-if="importantNotes.length > 0" class="result-group">
           <text class="result-group-title">重要提示</text>
           <view class="result-content">
             <view
-              v-for="(note, index) in analysisResult.importantNotes"
+              v-for="(note, index) in importantNotes"
               :key="index"
               class="note-item"
             >
               <text class="note-icon">💡</text>
               <text class="note-text">{{ note }}</text>
             </view>
-            <text v-if="!analysisResult.importantNotes?.length" class="empty-text"
-              >暂无重要提示</text
+            <text v-if="!importantNotes.length" class="empty-text">暂无重要提示</text>
+          </view>
+        </view>
+
+        <!-- Suggested Questions -->
+        <view v-if="suggestedQuestions.length > 0" class="result-group">
+          <text class="result-group-title">建议咨询问题</text>
+          <view class="result-content">
+            <view
+              v-for="(question, index) in suggestedQuestions"
+              :key="index"
+              class="question-item"
             >
+              <text class="question-icon">❓</text>
+              <text class="question-text">{{ question }}</text>
+            </view>
+            <text v-if="!suggestedQuestions.length" class="empty-text">暂无建议问题</text>
           </view>
         </view>
       </view>
@@ -160,56 +193,46 @@
  *
  * This page allows users to upload insurance contract documents (images or PDFs)
  * and receive AI-powered analysis including:
- * - Policy overview (product name, company, type)
- * - Coverage details
- * - Claim conditions
- * - Exclusions
+ * - Contract summary
+ * - Key terms with explanations
+ * - Activation conditions
+ * - Payout details
  * - Important notes
+ * - Suggested questions
  */
 import { onReady } from '@dcloudio/uni-app'
-import { ref } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useInterpretationStore } from '@/stores/interpretation'
+import type { Importance } from '@/types/insurance'
 
 /**
- * Uploaded file interface
+ * Initialize interpretation store
  */
-interface UploadedFile {
-  name: string
-  size: number
-  path: string
-  type: string
-}
+const interpretationStore = useInterpretationStore()
 
 /**
- * Analysis result interface
+ * Extract reactive state and getters from store
  */
-interface AnalysisResult {
-  productName: string
-  company: string
-  type: string
-  coverages: Array<{
-    title: string
-    description: string
-    amount?: string
-  }>
-  claimConditions: string[]
-  exclusions: string[]
-  importantNotes: string[]
-}
+const {
+  uploadedFile,
+  isLoading,
+  isSuccessful,
+  interpretationResult,
+  keyTerms,
+  activationConditions,
+  payoutDetails,
+  importantNotes,
+  suggestedQuestions,
+} = storeToRefs(interpretationStore)
 
 /**
- * Uploaded file state
+ * Extract actions from store (non-reactive)
  */
-const uploadedFile = ref<UploadedFile | null>(null)
-
-/**
- * Analysis result state
- */
-const analysisResult = ref<AnalysisResult | null>(null)
-
-/**
- * Analyzing state
- */
-const isAnalyzing = ref(false)
+const {
+  handleFileSelection,
+  analyzeContract,
+  removeFile: handleRemoveFileStore,
+} = interpretationStore
 
 /**
  * Page lifecycle - triggered when page is ready
@@ -221,6 +244,19 @@ onReady(() => {
 })
 
 /**
+ * Get importance label in Chinese
+ */
+const getImportanceLabel = (importance: Importance): string => {
+  const labels: Record<Importance, string> = {
+    critical: '关键',
+    high: '重要',
+    medium: '中等',
+    low: '一般',
+  }
+  return labels[importance] || '普通'
+}
+
+/**
  * Choose file from device
  */
 const chooseFile = () => {
@@ -230,27 +266,7 @@ const chooseFile = () => {
     extension: ['jpg', 'jpeg', 'png', 'pdf'],
     success: (res) => {
       const file = res.tempFiles[0]
-
-      // Validate file size (10MB max)
-      const maxSize = 10 * 1024 * 1024
-      if (file.size > maxSize) {
-        uni.showToast({
-          title: '文件大小不能超过10MB',
-          icon: 'none',
-          duration: 2000
-        })
-        return
-      }
-
-      uploadedFile.value = {
-        name: file.name,
-        size: file.size,
-        path: file.path,
-        type: getFileType(file.name)
-      }
-
-      // Reset previous analysis result when new file is selected
-      analysisResult.value = null
+      handleFileSelection(file)
     },
     fail: (err) => {
       // User cancelled selection, ignore error
@@ -267,16 +283,6 @@ const chooseFile = () => {
 }
 
 /**
- * Get file type from file name
- */
-const getFileType = (fileName: string): string => {
-  const ext = fileName.toLowerCase().split('.').pop()
-  if (ext === 'pdf') return 'pdf'
-  if (['jpg', 'jpeg', 'png'].includes(ext || '')) return 'image'
-  return 'unknown'
-}
-
-/**
  * Format file size to human readable format
  */
 const formatFileSize = (bytes: number): string => {
@@ -290,90 +296,20 @@ const formatFileSize = (bytes: number): string => {
 /**
  * Remove uploaded file
  */
-const removeFile = () => {
-  uploadedFile.value = null
-  analysisResult.value = null
+const handleRemoveFile = () => {
+  handleRemoveFileStore()
 }
 
 /**
  * Handle analysis
  */
 const handleAnalyze = async () => {
-  if (!uploadedFile.value) {
-    uni.showToast({
-      title: '请先选择文件',
-      icon: 'none',
-      duration: 2000
-    })
-    return
-  }
-
-  isAnalyzing.value = true
-
   try {
-    // TODO: Integrate with backend API
-    // For now, simulate API call with mock data
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    // Mock analysis result
-    analysisResult.value = {
-      productName: '重大疾病保险',
-      company: '示例保险公司',
-      type: '健康险',
-      coverages: [
-        {
-          title: '重大疾病保障',
-          description: '涵盖100种重大疾病，确诊后一次性赔付保险金',
-          amount: '50万元'
-        },
-        {
-          title: '轻症疾病保障',
-          description: '涵盖50种轻症疾病，赔付基本保额的30%',
-          amount: '15万元'
-        },
-        {
-          title: '身故保障',
-          description: '被保险人身故，赔付基本保额',
-          amount: '50万元'
-        }
-      ],
-      claimConditions: [
-        '确诊合同约定的重大疾病，需提供医院出具的诊断证明',
-        '轻症疾病需经保险公司认可的医疗机构确诊',
-        '申请理赔时需提供完整病历、检查报告等材料',
-        '理赔申请应在确诊后30日内提出'
-      ],
-      exclusions: [
-        '投保人对被保险人的故意杀害、故意伤害',
-        '被保险人故意自伤、故意犯罪或抗拒依法采取的刑事强制措施',
-        '被保险人主动吸食或注射毒品',
-        '酒后驾驶、无合法有效驾驶证驾驶，或驾驶无有效行驶证的机动车',
-        '战争、军事冲突、暴乱或武装叛乱',
-        '核爆炸、核辐射或核污染',
-        '遗传性疾病、先天性畸形、变形或染色体异常'
-      ],
-      importantNotes: [
-        '本合同有90天等待期，等待期内确诊不承担保险责任',
-        '轻症赔付后，重大疾病保额不变，但需继续缴纳保费',
-        '重疾赔付后，合同终止',
-        '请如实告知健康状况，否则可能影响理赔',
-        '建议仔细阅读保险条款，了解具体保障范围'
-      ]
-    }
-
-    uni.showToast({
-      title: '解读完成',
-      icon: 'success',
-      duration: 2000
-    })
+    await analyzeContract()
   } catch (error) {
-    uni.showToast({
-      title: '解读失败，请重试',
-      icon: 'none',
-      duration: 2000
-    })
-  } finally {
-    isAnalyzing.value = false
+    // Error is already handled by the store (toast shown)
+    // Just log for debugging
+    console.error('Analysis failed:', error)
   }
 }
 </script>
@@ -737,5 +673,217 @@ const handleAnalyze = async () => {
   color: #999999;
   text-align: center;
   padding: 20rpx 0;
+}
+
+/* Summary Text */
+.summary-text {
+  display: block;
+  font-size: 26rpx;
+  color: #333333;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+/* Term Item */
+.term-item {
+  padding: 16rpx;
+  background-color: #ffffff;
+  border-radius: 8rpx;
+  margin-bottom: 12rpx;
+  border-left: 4rpx solid #4a90e2;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+
+  &.importance-critical {
+    border-left-color: #ff4d4f;
+    background: linear-gradient(to right, #fff5f5 0%, #ffffff 50%);
+  }
+
+  &.importance-high {
+    border-left-color: #faad14;
+    background: linear-gradient(to right, #fffbe6 0%, #ffffff 50%);
+  }
+
+  &.importance-medium {
+    border-left-color: #4a90e2;
+    background: linear-gradient(to right, #e6f7ff 0%, #ffffff 50%);
+  }
+
+  &.importance-low {
+    border-left-color: #52c41a;
+    background: linear-gradient(to right, #f6ffed 0%, #ffffff 50%);
+  }
+}
+
+.term-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8rpx;
+}
+
+.term-name {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+  flex: 1;
+}
+
+.importance-badge {
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+  font-size: 20rpx;
+  font-weight: 500;
+
+  &.critical {
+    background-color: #ff4d4f;
+    color: #ffffff;
+  }
+
+  &.high {
+    background-color: #faad14;
+    color: #ffffff;
+  }
+
+  &.medium {
+    background-color: #4a90e2;
+    color: #ffffff;
+  }
+
+  &.low {
+    background-color: #52c41a;
+    color: #ffffff;
+  }
+}
+
+.importance-text {
+  font-size: 20rpx;
+}
+
+.term-explanation {
+  display: block;
+  font-size: 24rpx;
+  color: #666666;
+  line-height: 1.6;
+}
+
+/* Condition Item */
+.condition-header {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8rpx;
+}
+
+.condition-icon {
+  font-size: 20rpx;
+  margin-right: 8rpx;
+  line-height: 1.8;
+}
+
+.condition-name {
+  flex: 1;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+  line-height: 1.8;
+}
+
+.condition-description {
+  display: block;
+  font-size: 24rpx;
+  color: #666666;
+  line-height: 1.6;
+  margin-bottom: 8rpx;
+  padding-left: 28rpx;
+}
+
+.required-docs {
+  padding-left: 28rpx;
+}
+
+.docs-label {
+  font-size: 22rpx;
+  color: #999999;
+  margin-right: 4rpx;
+}
+
+.doc-item {
+  font-size: 22rpx;
+  color: #4a90e2;
+}
+
+/* Payout Item */
+.payout-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12rpx 0;
+
+  &:not(:last-child) {
+    border-bottom: 1rpx solid #e8e8e8;
+  }
+}
+
+.payout-label {
+  font-size: 26rpx;
+  color: #666666;
+  font-weight: 500;
+}
+
+.payout-value {
+  font-size: 26rpx;
+  font-weight: 500;
+  color: #1a1a1a;
+  text-align: right;
+  max-width: 400rpx;
+}
+
+.payout-limitations {
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #e8e8e8;
+}
+
+.limitations-label {
+  display: block;
+  font-size: 22rpx;
+  color: #999999;
+  margin-bottom: 8rpx;
+}
+
+.limitation-item {
+  padding-left: 16rpx;
+}
+
+.limitation-text {
+  font-size: 22rpx;
+  color: #666666;
+  line-height: 1.6;
+}
+
+/* Question Item */
+.question-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 12rpx;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.question-icon {
+  font-size: 20rpx;
+  margin-right: 8rpx;
+  line-height: 1.8;
+}
+
+.question-text {
+  flex: 1;
+  font-size: 24rpx;
+  color: #333333;
+  line-height: 1.8;
 }
 </style>
