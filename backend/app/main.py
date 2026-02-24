@@ -7,7 +7,7 @@ Configures FastAPI app with CORS middleware for frontend access.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.app.api import consultation_router
+from backend.app.api import consultation_router, interpretation_router
 
 app = FastAPI(
     title="AI Insurance Advisor API",
@@ -27,6 +27,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(consultation_router)
+app.include_router(interpretation_router)
 
 
 @app.get("/")
