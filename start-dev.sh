@@ -3,13 +3,13 @@ echo "Starting AI Insurance Advisor - Local Development Environment"
 echo ""
 
 echo "[1/2] Starting Backend (FastAPI) on http://localhost:8000"
-(cd backend && uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000) &
+uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 sleep 2
 
 echo "[2/2] Starting Frontend (uni-app H5) ..."
-(cd frontend && npm run dev:h5) &
+cd frontend && npm run dev:h5 &
 FRONTEND_PID=$!
 
 echo ""
