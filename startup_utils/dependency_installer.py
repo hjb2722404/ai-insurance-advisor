@@ -32,7 +32,7 @@ class DependencyInstaller:
         self.project_root = Path.cwd()
 
     @staticmethod
-    def check_pip_dependencies(requirements_path: str) -> Tuple[bool, list[str]]:
+    def check_pip_dependencies(requirements_path: str, python_path: Optional[str] = None) -> Tuple[bool, list[str]]:
         """
         Check if all pip dependencies from requirements.txt are installed.
 
@@ -41,6 +41,8 @@ class DependencyInstaller:
 
         Args:
             requirements_path: Path to the requirements.txt file.
+            python_path: Optional path to Python executable. If provided, checks
+                        packages in that Python environment via 'pip list'.
 
         Returns:
             A tuple of (all_satisfied: bool, missing_packages: list[str]).
@@ -65,6 +67,42 @@ class DependencyInstaller:
 
         missing_packages = []
 
+        # Get list of installed packages from the target Python environment
+        installed_packages = set()
+        if python_path:
+            try:
+                result = subprocess.run(
+                    [python_path, '-m', 'pip', 'list', '--format=json'],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    import json
+                    packages = json.loads(result.stdout)
+                    installed_packages = {pkg['name'].lower() for pkg in packages}
+            except (subprocess.CalledProcessError, json.JSONDecodeError, subprocess.TimeoutExpired):
+                # Fall back to import-based checking if pip list fails
+                pass
+        else:
+            # Use import-based checking for current environment
+            try:
+                result = subprocess.run(
+                    [sys.executable, '-m', 'pip', 'list', '--format=json'],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    import json
+                    packages = json.loads(result.stdout)
+                    installed_packages = {pkg['name'].lower() for pkg in packages}
+            except (subprocess.CalledProcessError, json.JSONDecodeError, subprocess.TimeoutExpired):
+                # Fall back to import-based checking
+                pass
+
         try:
             with open(requirements_file, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -77,21 +115,42 @@ class DependencyInstaller:
                     # Extract package name (before any version specifier)
                     # Handles: package, package==1.0, package>=1.0, package[extras]
                     package_name = line.split('==')[0].split('>=')[0].split('<=')[0].split('~=')[0].split('[')[0].strip()
+                    package_name_lower = package_name.lower()
 
-                    # Try to import the package to check if it's installed
-                    # Normalize package name: replace hyphens with underscores for Python imports
-                    import_name = package_name.replace('-', '_').lower()
+                    # Check if package is installed
+                    if installed_packages:
+                        # Use pip list result
+                        # Handle package name normalization
+                        if package_name_lower not in installed_packages:
+                            # Check common normalized names
+                            normalized_names = [
+                                package_name_lower.replace('-', '_'),
+                                package_name_lower.replace('_', '-'),
+                            ]
+                            # Special handling for packages with different pip names
+                            if package_name_lower == 'pymupdf':
+                                normalized_names.append('pymupdf')
+                                normalized_names.append('fitz')  # pymupdf is installed as fitz
+                            if package_name_lower == 'pydantic-settings':
+                                normalized_names.append('pydantic-settings')
+                                normalized_names.append('pydantic_settings')
 
-                    try:
-                        # Special handling for packages with different import names
-                        if package_name == 'pymupdf':
-                            import_name = 'fitz'
-                        elif package_name == 'pydantic-settings':
-                            import_name = 'pydantic_settings'
+                            if not any(n in installed_packages for n in normalized_names):
+                                missing_packages.append(package_name)
+                    else:
+                        # Fall back to import-based checking
+                        import_name = package_name.replace('-', '_').lower()
 
-                        __import__(import_name)
-                    except ImportError:
-                        missing_packages.append(package_name)
+                        try:
+                            # Special handling for packages with different import names
+                            if package_name == 'pymupdf':
+                                import_name = 'fitz'
+                            elif package_name == 'pydantic-settings':
+                                import_name = 'pydantic_settings'
+
+                            __import__(import_name)
+                        except ImportError:
+                            missing_packages.append(package_name)
 
         except FileNotFoundError:
             raise
@@ -319,7 +378,8 @@ class DependencyInstaller:
 
     def install_backend_dependencies(
         self,
-        backend_dir: Optional[str] = None
+        backend_dir: Optional[str] = None,
+        python_path: Optional[str] = None
     ) -> Tuple[bool, str]:
         """
         Install backend Python dependencies.
@@ -329,6 +389,7 @@ class DependencyInstaller:
 
         Args:
             backend_dir: Path to backend directory. If None, uses 'backend' from project root.
+            python_path: Optional path to Python executable for pip. If None, uses sys.executable.
 
         Returns:
             A tuple of (success: bool, message: str).
@@ -357,7 +418,7 @@ class DependencyInstaller:
             return True, 'All backend dependencies are already installed'
 
         # Install missing dependencies
-        success, message = self.install_pip_dependencies(str(requirements_file))
+        success, message = self.install_pip_dependencies(str(requirements_file), python_path=python_path)
 
         if success:
             return True, message
@@ -413,7 +474,7 @@ class DependencyInstaller:
 
 
 # Convenience functions for direct import
-def check_pip_dependencies(requirements_path: str) -> Tuple[bool, list[str]]:
+def check_pip_dependencies(requirements_path: str, python_path: Optional[str] = None) -> Tuple[bool, list[str]]:
     """
     Check if all pip dependencies from requirements.txt are installed.
 
@@ -421,11 +482,12 @@ def check_pip_dependencies(requirements_path: str) -> Tuple[bool, list[str]]:
 
     Args:
         requirements_path: Path to the requirements.txt file.
+        python_path: Optional path to Python executable.
 
     Returns:
         A tuple of (all_satisfied: bool, missing_packages: list[str]).
     """
-    return DependencyInstaller.check_pip_dependencies(requirements_path)
+    return DependencyInstaller.check_pip_dependencies(requirements_path, python_path)
 
 
 def install_pip_dependencies(

@@ -116,7 +116,7 @@ class BackendStarter:
         Detect the virtual environment directory.
 
         Searches for common virtual environment directory names in the
-        project root. Returns the path if found, None otherwise.
+        backend directory first, then project root. Returns the path if found, None otherwise.
 
         Returns:
             Path to the virtual environment directory, or None if not found.
@@ -124,10 +124,21 @@ class BackendStarter:
         Examples:
             >>> starter = BackendStarter()
             >>> starter.venv_path  # If venv exists
-            PosixPath('/path/to/project/venv')
+            PosixPath('/path/to/project/backend/.venv')
             >>> starter.venv_path  # If no venv exists
             None
         """
+        # Check backend directory first (most common location)
+        for venv_name in self.VENV_NAMES:
+            venv_path = self.backend_dir / venv_name
+            if venv_path.exists() and venv_path.is_dir():
+                # Check if it looks like a virtual environment
+                # by verifying the presence of activation scripts
+                if (venv_path / 'Scripts' / 'activate.bat').exists() or \
+                   (venv_path / 'bin' / 'activate').exists():
+                    return venv_path
+
+        # Fall back to project root
         for venv_name in self.VENV_NAMES:
             venv_path = self.project_root / venv_name
             if venv_path.exists() and venv_path.is_dir():
@@ -136,6 +147,7 @@ class BackendStarter:
                 if (venv_path / 'Scripts' / 'activate.bat').exists() or \
                    (venv_path / 'bin' / 'activate').exists():
                     return venv_path
+
         return None
 
     def is_in_venv(self) -> bool:
@@ -185,7 +197,7 @@ class BackendStarter:
         Check if all backend dependencies from requirements.txt are installed.
 
         Uses the DependencyInstaller to validate that all required packages
-        are available in the current Python environment.
+        are available in the virtual environment.
 
         Returns:
             A tuple of (all_satisfied: bool, missing_packages: list[str]).
@@ -203,7 +215,8 @@ class BackendStarter:
             Missing: fastapi, uvicorn
         """
         requirements_file = self.backend_dir / 'requirements.txt'
-        return DependencyInstaller.check_pip_dependencies(str(requirements_file))
+        venv_python = str(self.get_venv_python_path()) if self.get_venv_python_path() else None
+        return DependencyInstaller.check_pip_dependencies(str(requirements_file), python_path=venv_python)
 
     def install_dependencies(self) -> Tuple[bool, str]:
         """
@@ -229,7 +242,8 @@ class BackendStarter:
             Successfully installed 25 packages
         """
         installer = DependencyInstaller()
-        return installer.install_backend_dependencies(str(self.backend_dir))
+        venv_python = str(self.get_venv_python_path()) if self.get_venv_python_path() else None
+        return installer.install_backend_dependencies(str(self.backend_dir), python_path=venv_python)
 
     def get_available_port(
         self,

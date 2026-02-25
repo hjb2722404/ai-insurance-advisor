@@ -305,7 +305,8 @@ class ServiceManager:
             self.logger.debug(f"Error reading {service_name} output: {e}")
 
     def start_service(self, service_name: str, command: list[str],
-                      cwd: Path, prefix: str, color_code: str) -> Optional[subprocess.Popen]:
+                      cwd: Path, prefix: str, color_code: str,
+                      env: Optional[dict] = None) -> Optional[subprocess.Popen]:
         """Start a service and begin monitoring its output.
 
         Args:
@@ -314,6 +315,7 @@ class ServiceManager:
             cwd: Working directory for the process.
             prefix: Prefix for output lines (e.g., "[Backend] ").
             color_code: ANSI color code for output.
+            env: Optional environment variables dict.
 
         Returns:
             The subprocess.Popen object if started successfully, None otherwise.
@@ -334,6 +336,7 @@ class ServiceManager:
                 text=True,
                 bufsize=1,  # Line buffered
                 stdin=subprocess.DEVNULL,
+                env=env,
             )
 
             with self._lock:
@@ -712,15 +715,22 @@ def main() -> int:
             # Build command using venv python if available, otherwise system python
             venv_python = backend_starter.get_venv_python_path()
             python_exe = venv_python if venv_python else backend_starter.python_path
+
+            # Set PYTHONPATH to include project root for 'backend.app.main:app' import
+            import os
+            env = os.environ.copy()
+            env['PYTHONPATH'] = str(backend_starter.project_root)
+
             backend_cmd = [python_exe, "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", str(backend_port), "--reload"]
 
-            # Start backend
+            # Start backend with project root as cwd and PYTHONPATH set
             backend_process = manager.start_service(
                 service_name="Backend",
                 command=backend_cmd,
-                cwd=backend_starter.backend_dir,
+                cwd=str(backend_starter.project_root),
                 prefix="[Backend] ",
-                color_code=Colors.MAGENTA
+                color_code=Colors.MAGENTA,
+                env=env
             )
 
             if backend_process:
