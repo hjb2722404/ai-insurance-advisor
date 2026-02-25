@@ -464,6 +464,136 @@ class BackendStarter:
         """
         return self.env_example_path.exists()
 
+    def ensure_env_file(self, port: Optional[int] = None) -> bool:
+        """
+        Ensure the backend .env file exists, creating it from .env.example if needed.
+
+        If the .env file doesn't exist, it will be created by copying .env.example
+        and updating the API_PORT value to the specified or available port.
+
+        If the .env file already exists, the port will be updated if provided.
+
+        Args:
+            port: The port to set in API_PORT. If None, uses the available port.
+                  If the .env file exists and port is None, the port is not changed.
+
+        Returns:
+            True if the .env file exists or was created successfully, False otherwise.
+
+        Raises:
+            FileNotFoundError: If .env.example doesn't exist and .env doesn't exist.
+
+        Examples:
+            >>> starter = BackendStarter()
+            >>> starter.ensure_env_file(port=8001)
+            True
+            >>> # .env now exists with API_PORT=8001
+            >>> port = starter.get_env_port()
+            >>> print(f"Port in .env: {port}")
+            Port in .env: 8001
+        """
+        # If .env already exists, just update the port if provided
+        if self.env_path.exists():
+            if port is not None:
+                return self._update_env_port(port)
+            return True
+
+        # Check if .env.example exists
+        if not self.env_example_path.exists():
+            raise FileNotFoundError(
+                f"Cannot create .env file: {self.env_example_path} not found. "
+                f"Please create a .env.example file in the backend directory first."
+            )
+
+        # Determine the port to use
+        if port is None:
+            port = self.get_available_port()
+
+        # Read .env.example content
+        try:
+            with open(self.env_example_path, 'r', encoding='utf-8') as f:
+                env_content = f.read()
+        except (OSError, IOError) as e:
+            return False
+
+        # Update API_PORT in the content
+        env_content = self._replace_port_in_content(env_content, port)
+
+        # Write the .env file
+        try:
+            with open(self.env_path, 'w', encoding='utf-8') as f:
+                f.write(env_content)
+            return True
+        except (OSError, IOError) as e:
+            return False
+
+    def _update_env_port(self, port: int) -> bool:
+        """
+        Update the API_PORT value in an existing .env file.
+
+        Args:
+            port: The new port value to set.
+
+        Returns:
+            True if the port was updated successfully, False otherwise.
+        """
+        try:
+            with open(self.env_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Update the port
+            updated_content = self._replace_port_in_content(content, port)
+
+            # Write back if content changed
+            if updated_content != content:
+                with open(self.env_path, 'w', encoding='utf-8') as f:
+                    f.write(updated_content)
+
+            return True
+        except (OSError, IOError):
+            return False
+
+    def _replace_port_in_content(self, content: str, port: int) -> str:
+        """
+        Replace the API_PORT value in environment file content.
+
+        Args:
+            content: The environment file content.
+            port: The port value to set.
+
+        Returns:
+            The updated content with API_PORT set to the specified port.
+        """
+        import re
+
+        # Try to replace API_PORT=<value> with API_PORT=<port>
+        # Handle both commented and uncommented versions
+        patterns = [
+            (r'^#?\s*API_PORT\s*=\s*\d+', f'API_PORT={port}'),  # API_PORT=8000 or # API_PORT=8000
+            (r'^#?\s*API_PORT\s*=\s*$', f'API_PORT={port}'),      # API_PORT= or # API_PORT=
+        ]
+
+        lines = content.split('\n')
+        updated_lines = []
+
+        for line in lines:
+            matched = False
+            for pattern, replacement in patterns:
+                if re.match(pattern, line, re.MULTILINE):
+                    # Preserve the comment status if the line is commented
+                    if line.strip().startswith('#'):
+                        # Uncomment and set the port
+                        updated_lines.append(replacement)
+                    else:
+                        updated_lines.append(replacement)
+                    matched = True
+                    break
+
+            if not matched:
+                updated_lines.append(line)
+
+        return '\n'.join(updated_lines)
+
     def get_status(self) -> dict:
         """
         Get the current status of the backend service configuration.
