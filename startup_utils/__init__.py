@@ -13,5 +13,22 @@ and resolution.
 """
 
 from startup_utils.port_checker import is_port_in_use, find_available_port
+from startup_utils.output_monitor import (
+    OutputMonitor,
+    ServiceStatus,
+    create_monitor,
+    detect_backend_success,
+    detect_frontend_success,
+    detect_failure,
+)
 
-__all__ = ["is_port_in_use", "find_available_port"]
+__all__ = [
+    "is_port_in_use",
+    "find_available_port",
+    "OutputMonitor",
+    "ServiceStatus",
+    "create_monitor",
+    "detect_backend_success",
+    "detect_frontend_success",
+    "detect_failure",
+]
