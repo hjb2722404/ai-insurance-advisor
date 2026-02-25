@@ -26,6 +26,11 @@ from startup_utils.backend_starter import (
     create_backend_starter,
     get_backend_port,
 )
+from startup_utils.frontend_starter import (
+    FrontendStarter,
+    create_frontend_starter,
+    get_frontend_port,
+)
 
 __all__ = [
     "is_port_in_use",
@@ -39,4 +44,7 @@ __all__ = [
     "BackendStarter",
     "create_backend_starter",
     "get_backend_port",
+    "FrontendStarter",
+    "create_frontend_starter",
+    "get_frontend_port",
 ]
