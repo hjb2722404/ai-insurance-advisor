@@ -21,6 +21,11 @@ from startup_utils.output_monitor import (
     detect_frontend_success,
     detect_failure,
 )
+from startup_utils.backend_starter import (
+    BackendStarter,
+    create_backend_starter,
+    get_backend_port,
+)
 
 __all__ = [
     "is_port_in_use",
@@ -31,4 +36,7 @@ __all__ = [
     "detect_backend_success",
     "detect_frontend_success",
     "detect_failure",
+    "BackendStarter",
+    "create_backend_starter",
+    "get_backend_port",
 ]
