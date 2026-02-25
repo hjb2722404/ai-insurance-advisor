@@ -691,8 +691,13 @@ def main() -> int:
             backend_port = backend_starter.get_available_port()
             logger.info(f"Backend port: {backend_port}")
 
-            # Build command
-            backend_cmd = backend_starter.get_start_command(port=backend_port)
+            # Ensure .env file exists with correct port
+            backend_starter.ensure_env_file(port=backend_port)
+
+            # Build command using venv python if available, otherwise system python
+            venv_python = backend_starter.get_venv_python_path()
+            python_exe = venv_python if venv_python else backend_starter.python_path
+            backend_cmd = [python_exe, "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", str(backend_port), "--reload"]
 
             # Start backend
             backend_process = manager.start_service(
@@ -726,8 +731,8 @@ def main() -> int:
             frontend_port = frontend_starter.get_available_port()
             logger.info(f"Frontend port: {frontend_port}")
 
-            # Build command
-            frontend_cmd = frontend_starter.get_start_command(port=frontend_port)
+            # Build command as list
+            frontend_cmd = ["npm", "run", "dev:h5"]
 
             # Start frontend
             frontend_process = manager.start_service(
