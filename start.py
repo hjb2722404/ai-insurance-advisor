@@ -29,9 +29,13 @@ Options:
 import argparse
 import logging
 import os
+import signal
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 # Add startup_utils to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -237,6 +241,233 @@ def print_header(message: str) -> None:
         print(f"\n{Colors.BOLD}{Colors.BLUE}{message}{Colors.RESET}\n")
     else:
         print(f"\n{message}\n")
+
+
+class ServiceManager:
+    """Manages concurrent service startup and shutdown.
+
+    Handles starting multiple services concurrently, monitoring their output,
+    and providing graceful shutdown when requested.
+    """
+
+    def __init__(self, logger: logging.Logger):
+        """Initialize the service manager.
+
+        Args:
+            logger: Logger instance for output messages.
+        """
+        self.logger = logger
+        self.processes: Dict[str, subprocess.Popen] = {}
+        self.output_threads: Dict[str, threading.Thread] = {}
+        self.shutdown_event = threading.Event()
+        self._lock = threading.Lock()
+
+        # Set up signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _signal_handler(self, signum: int, frame) -> None:
+        """Handle shutdown signals (SIGINT, SIGTERM).
+
+        Args:
+            signum: The signal number received.
+            frame: The current stack frame.
+        """
+        sig_name = signal.Signals(signum).name
+        self.logger.info(f"Received {sig_name}, shutting down services...")
+        self.shutdown_event.set()
+        self.stop_all()
+
+    def _read_output(self, process: subprocess.Popen, service_name: str,
+                     prefix: str, color_code: str) -> None:
+        """Read and print process output in real-time.
+
+        Args:
+            process: The subprocess to read output from.
+            service_name: Name of the service for logging.
+            prefix: Prefix to add to each line of output.
+            color_code: ANSI color code for the output.
+        """
+        reset_code = Colors.RESET if color_code else ''
+        try:
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    # Strip the newline and add our formatting
+                    line = line.rstrip('\n\r')
+                    if Colors.supports_color():
+                        print(f"{color_code}{prefix}{line}{reset_code}")
+                    else:
+                        print(f"{prefix}{line}")
+        except Exception as e:
+            self.logger.debug(f"Error reading {service_name} output: {e}")
+
+    def start_service(self, service_name: str, command: list[str],
+                      cwd: Path, prefix: str, color_code: str) -> Optional[subprocess.Popen]:
+        """Start a service and begin monitoring its output.
+
+        Args:
+            service_name: Name identifier for the service.
+            command: Command list to execute.
+            cwd: Working directory for the process.
+            prefix: Prefix for output lines (e.g., "[Backend] ").
+            color_code: ANSI color code for output.
+
+        Returns:
+            The subprocess.Popen object if started successfully, None otherwise.
+        """
+        if self.shutdown_event.is_set():
+            self.logger.warning(f"Shutdown in progress, skipping {service_name}")
+            return None
+
+        try:
+            self.logger.info(f"Starting {service_name}...")
+
+            # Start the process
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                stdin=subprocess.DEVNULL,
+            )
+
+            with self._lock:
+                self.processes[service_name] = process
+
+            # Start output monitoring thread
+            output_thread = threading.Thread(
+                target=self._read_output,
+                args=(process, service_name, prefix, color_code),
+                daemon=True,
+                name=f"{service_name}-output"
+            )
+            output_thread.start()
+            self.output_threads[service_name] = output_thread
+
+            self.logger.debug(f"{service_name} started with PID {process.pid}")
+            return process
+
+        except Exception as e:
+            self.logger.error(f"Failed to start {service_name}: {e}")
+            return None
+
+    def stop_service(self, service_name: str) -> bool:
+        """Stop a specific service.
+
+        Args:
+            service_name: Name of the service to stop.
+
+        Returns:
+            True if the service was stopped, False otherwise.
+        """
+        with self._lock:
+            process = self.processes.get(service_name)
+            if not process:
+                self.logger.debug(f"Service {service_name} not found")
+                return False
+
+            try:
+                if process.poll() is None:
+                    self.logger.info(f"Stopping {service_name} (PID {process.pid})...")
+                    process.terminate()
+
+                    # Wait up to 5 seconds for graceful shutdown
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.logger.warning(
+                            f"{service_name} did not shut down gracefully, forcing..."
+                        )
+                        process.kill()
+                        process.wait()
+
+                # Remove from tracking
+                del self.processes[service_name]
+                return True
+
+            except Exception as e:
+                self.logger.error(f"Error stopping {service_name}: {e}")
+                return False
+
+    def stop_all(self) -> None:
+        """Stop all running services."""
+        with self._lock:
+            service_names = list(self.processes.keys())
+
+        if not service_names:
+            return
+
+        self.logger.info("Stopping all services...")
+
+        # Stop each service
+        for service_name in service_names:
+            self.stop_service(service_name)
+
+        # Wait for output threads to finish
+        for service_name, thread in self.output_threads.items():
+            if thread.is_alive():
+                thread.join(timeout=2)
+
+        self.logger.info("All services stopped")
+
+    def wait_for_services(self, timeout: Optional[float] = None) -> Dict[str, int]:
+        """Wait for all services to complete or timeout.
+
+        Args:
+            timeout: Maximum time to wait in seconds. None for unlimited.
+
+        Returns:
+            Dictionary mapping service names to their exit codes.
+        """
+        exit_codes = {}
+        start_time = time.time()
+
+        while True:
+            # Check if shutdown was requested
+            if self.shutdown_event.is_set():
+                break
+
+            # Check if all processes have completed
+            all_done = True
+            with self._lock:
+                for name, process in self.processes.items():
+                    if process.poll() is None:
+                        all_done = False
+                        break
+                    else:
+                        exit_codes[name] = process.returncode
+
+            if all_done:
+                break
+
+            # Check timeout
+            if timeout and (time.time() - start_time) > timeout:
+                self.logger.warning("Timeout reached, stopping services...")
+                self.stop_all()
+                break
+
+            # Small sleep to avoid busy waiting
+            time.sleep(0.1)
+
+        return exit_codes
+
+    def get_pids(self) -> Dict[str, int]:
+        """Get PIDs of all running services.
+
+        Returns:
+            Dictionary mapping service names to their PIDs.
+        """
+        pids = {}
+        with self._lock:
+            for name, process in self.processes.items():
+                if process.poll() is None:
+                    pids[name] = process.pid
+        return pids
 
 
 def setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> logging.Logger:
@@ -447,9 +678,109 @@ def main() -> int:
             print_info(f"Frontend would start on port: {port}")
         return 0
 
-    # TODO: Subtask 4-2 - Implement concurrent service startup
-    # TODO: Subtask 4-3 - Implement signal handling
-    print_warning("Service startup not yet implemented - see subtask 4-2")
+    # Start services concurrently
+    print_header("Starting Services")
+
+    # Create service manager
+    manager = ServiceManager(logger)
+
+    # Backend service
+    if backend_starter:
+        try:
+            # Find available port
+            backend_port = backend_starter.get_available_port()
+            logger.info(f"Backend port: {backend_port}")
+
+            # Build command
+            backend_cmd = backend_starter.get_start_command(port=backend_port)
+
+            # Start backend
+            backend_process = manager.start_service(
+                service_name="Backend",
+                command=backend_cmd,
+                cwd=backend_starter.backend_dir,
+                prefix="[Backend] ",
+                color_code=Colors.MAGENTA
+            )
+
+            if backend_process:
+                print_success(f"Backend started on http://localhost:{backend_port}")
+                print_success(f"API Docs: http://localhost:{backend_port}/docs")
+            else:
+                print_error("Failed to start backend")
+                return 1
+
+        except Exception as e:
+            print_error(f"Error starting backend: {e}")
+            logger.debug(f"Backend error details:", exc_info=True)
+            return 1
+
+    # Small delay before starting frontend (like start-dev.sh)
+    if backend_starter and frontend_starter:
+        time.sleep(2)
+
+    # Frontend service
+    if frontend_starter:
+        try:
+            # Find available port
+            frontend_port = frontend_starter.get_available_port()
+            logger.info(f"Frontend port: {frontend_port}")
+
+            # Build command
+            frontend_cmd = frontend_starter.get_start_command(port=frontend_port)
+
+            # Start frontend
+            frontend_process = manager.start_service(
+                service_name="Frontend",
+                command=frontend_cmd,
+                cwd=frontend_starter.frontend_dir,
+                prefix="[Frontend] ",
+                color_code=Colors.BLUE
+            )
+
+            if frontend_process:
+                print_success(f"Frontend started on http://localhost:{frontend_port}")
+            else:
+                print_error("Failed to start frontend")
+                # Stop backend if running
+                if backend_starter:
+                    manager.stop_all()
+                return 1
+
+        except Exception as e:
+            print_error(f"Error starting frontend: {e}")
+            logger.debug(f"Frontend error details:", exc_info=True)
+            if backend_starter:
+                manager.stop_all()
+            return 1
+
+    # Show service status
+    pids = manager.get_pids()
+    if pids:
+        print_header("Services Running")
+        pid_list = ", ".join(f"{name}={pid}" for name, pid in pids.items())
+        print_info(f"PIDs: {pid_list}")
+
+        print("\nService URLs:")
+        if "Backend" in pids and backend_starter:
+            port = backend_starter.get_available_port()
+            print(f"  - Backend:    http://localhost:{port}")
+            print(f"  - API Docs:   http://localhost:{port}/docs")
+        if "Frontend" in pids and frontend_starter:
+            port = frontend_starter.get_available_port()
+            print(f"  - Frontend:   http://localhost:{port}")
+        print()
+
+    print_info("Press Ctrl+C to stop all services")
+
+    # Wait for services (indefinitely until Ctrl+C)
+    exit_codes = manager.wait_for_services()
+
+    # Report exit codes if services stopped on their own
+    if exit_codes:
+        logger.info("Service exit codes:")
+        for name, code in exit_codes.items():
+            logger.info(f"  {name}: {code}")
 
     return 0
 
