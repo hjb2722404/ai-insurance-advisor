@@ -694,6 +694,21 @@ def main() -> int:
             # Ensure .env file exists with correct port
             backend_starter.ensure_env_file(port=backend_port)
 
+            # Check and install dependencies if needed
+            print_info("Checking backend dependencies...")
+            deps_satisfied, missing_packages = backend_starter.check_dependencies()
+            if not deps_satisfied:
+                print_warning(f"Missing dependencies: {', '.join(missing_packages)}")
+                print_info("Installing backend dependencies...")
+                success, message = backend_starter.install_dependencies()
+                if success:
+                    print_success(message)
+                else:
+                    print_error(f"Failed to install dependencies: {message}")
+                    return 1
+            else:
+                print_success("All backend dependencies are installed")
+
             # Build command using venv python if available, otherwise system python
             venv_python = backend_starter.get_venv_python_path()
             python_exe = venv_python if venv_python else backend_starter.python_path
@@ -730,6 +745,27 @@ def main() -> int:
             # Find available port
             frontend_port = frontend_starter.get_available_port()
             logger.info(f"Frontend port: {frontend_port}")
+
+            # Check and install dependencies if needed
+            print_info("Checking frontend dependencies...")
+            has_node_modules, is_complete = frontend_starter.check_dependencies()
+            if not has_node_modules or not is_complete:
+                if not has_node_modules:
+                    print_warning("node_modules not found - dependencies need to be installed")
+                else:
+                    print_warning("node_modules incomplete - re-installing dependencies")
+                print_info("Installing frontend dependencies...")
+                success, message = frontend_starter.install_dependencies()
+                if success:
+                    print_success(message)
+                else:
+                    print_error(f"Failed to install dependencies: {message}")
+                    # Stop backend if running
+                    if backend_starter:
+                        manager.stop_all()
+                    return 1
+            else:
+                print_success("All frontend dependencies are installed")
 
             # Build command as list
             frontend_cmd = ["npm", "run", "dev:h5"]
