@@ -5,6 +5,8 @@ Provides backend-specific startup functionality including:
 - Port detection and conflict resolution for the FastAPI backend
 - .env file management with dynamic port updating
 - Integration with uvicorn server startup
+- Virtual environment detection and Python executable path resolution
+- Dependency validation for backend requirements
 
 This module handles the backend service startup logic, ensuring that
 the service starts on an available port and that configuration is
@@ -12,18 +14,21 @@ properly set up.
 """
 
 import os
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from startup_utils.port_checker import find_available_port, is_port_in_use
+from startup_utils.dependency_installer import DependencyInstaller
 
 
 class BackendStarter:
     """
     Backend service starter class for managing FastAPI application startup.
 
-    Handles port detection, .env file management, and provides the
-    necessary configuration for starting the backend service with uvicorn.
+    Handles port detection, .env file management, virtual environment
+    detection, dependency validation, and provides the necessary
+    configuration for starting the backend service with uvicorn.
 
     Attributes:
         default_port: The default port for the backend service (8000).
@@ -31,6 +36,8 @@ class BackendStarter:
         backend_dir: The backend directory path.
         env_example_path: Path to the .env.example file.
         env_path: Path to the .env file.
+        python_path: Path to the Python executable (sys.executable).
+        venv_path: Path to the virtual environment directory, or None.
 
     Examples:
         >>> starter = BackendStarter()
@@ -39,6 +46,10 @@ class BackendStarter:
         >>> available_port = starter.get_available_port()
         >>> print(f"Backend will start on port {available_port}")
         Backend will start on port 8000
+        >>> print(f"Python: {starter.python_path}")
+        Python: /usr/bin/python
+        >>> print(f"Venv: {starter.venv_path}")
+        Venv: /path/to/project/venv
     """
 
     # Default configuration
@@ -47,6 +58,7 @@ class BackendStarter:
     BACKEND_DIR = 'backend'
     ENV_EXAMPLE_FILE = '.env.example'
     ENV_FILE = '.env'
+    VENV_NAMES = ['venv', '.venv', 'env', '.env', '.venv']
 
     def __init__(
         self,
@@ -73,6 +85,10 @@ class BackendStarter:
             >>> starter = BackendStarter(default_port=9000)
             >>> print(starter.default_port)
             9000
+            >>> print(starter.python_path)
+            /usr/bin/python
+            >>> print(starter.venv_path)
+            /path/to/project/venv
         """
         # Determine project root
         if project_root is None:
@@ -88,6 +104,132 @@ class BackendStarter:
         self.backend_dir = self.project_root / self.BACKEND_DIR
         self.env_example_path = self.backend_dir / self.ENV_EXAMPLE_FILE
         self.env_path = self.backend_dir / self.ENV_FILE
+
+        # Set up Python executable path
+        self.python_path = sys.executable
+
+        # Detect virtual environment path
+        self.venv_path = self._detect_venv_path()
+
+    def _detect_venv_path(self) -> Optional[Path]:
+        """
+        Detect the virtual environment directory.
+
+        Searches for common virtual environment directory names in the
+        project root. Returns the path if found, None otherwise.
+
+        Returns:
+            Path to the virtual environment directory, or None if not found.
+
+        Examples:
+            >>> starter = BackendStarter()
+            >>> starter.venv_path  # If venv exists
+            PosixPath('/path/to/project/venv')
+            >>> starter.venv_path  # If no venv exists
+            None
+        """
+        for venv_name in self.VENV_NAMES:
+            venv_path = self.project_root / venv_name
+            if venv_path.exists() and venv_path.is_dir():
+                # Check if it looks like a virtual environment
+                # by verifying the presence of activation scripts
+                if (venv_path / 'Scripts' / 'activate.bat').exists() or \
+                   (venv_path / 'bin' / 'activate').exists():
+                    return venv_path
+        return None
+
+    def is_in_venv(self) -> bool:
+        """
+        Check if the current Python is running in a virtual environment.
+
+        Uses sys.prefix and sys.base_prefix to determine if we're in a venv.
+
+        Returns:
+            True if running in a virtual environment, False otherwise.
+
+        Examples:
+            >>> starter = BackendStarter()
+            >>> starter.is_in_venv()
+            True
+        """
+        return sys.prefix != sys.base_prefix
+
+    def get_venv_python_path(self) -> Optional[Path]:
+        """
+        Get the path to the Python executable in the detected virtual environment.
+
+        Returns the path to the Python executable inside the virtual environment,
+        regardless of whether the current Python is running in that venv.
+
+        Returns:
+            Path to the venv Python executable, or None if no venv detected.
+
+        Examples:
+            >>> starter = BackendStarter()
+            >>> starter.get_venv_python_path()
+            PosixPath('/path/to/project/venv/bin/python')
+        """
+        if self.venv_path is None:
+            return None
+
+        # Determine the correct subdirectory based on platform
+        if os.name == 'nt':  # Windows
+            python_exe = self.venv_path / 'Scripts' / 'python.exe'
+        else:  # Unix-like (Linux, macOS)
+            python_exe = self.venv_path / 'bin' / 'python'
+
+        return python_exe if python_exe.exists() else None
+
+    def check_dependencies(self) -> Tuple[bool, list[str]]:
+        """
+        Check if all backend dependencies from requirements.txt are installed.
+
+        Uses the DependencyInstaller to validate that all required packages
+        are available in the current Python environment.
+
+        Returns:
+            A tuple of (all_satisfied: bool, missing_packages: list[str]).
+            - all_satisfied: True if all dependencies are installed, False otherwise.
+            - missing_packages: List of package names that are missing.
+
+        Raises:
+            FileNotFoundError: If requirements.txt doesn't exist.
+
+        Examples:
+            >>> starter = BackendStarter()
+            >>> all_satisfied, missing = starter.check_dependencies()
+            >>> if not all_satisfied:
+            ...     print(f"Missing: {', '.join(missing)}")
+            Missing: fastapi, uvicorn
+        """
+        requirements_file = self.backend_dir / 'requirements.txt'
+        return DependencyInstaller.check_pip_dependencies(str(requirements_file))
+
+    def install_dependencies(self) -> Tuple[bool, str]:
+        """
+        Install backend Python dependencies from requirements.txt.
+
+        Uses the DependencyInstaller to install all required packages.
+        If dependencies are already satisfied, returns success message.
+
+        Returns:
+            A tuple of (success: bool, message: str).
+            - success: True if installation succeeded or deps already installed.
+            - message: Success message or error details.
+
+        Examples:
+            >>> starter = BackendStarter()
+            >>> success, message = starter.install_dependencies()
+            >>> if success:
+            ...     print(message)
+            All backend dependencies are already installed
+            >>> success, message = starter.install_dependencies()
+            >>> if success:
+            ...     print(message)
+            Successfully installed 25 packages
+        """
+        installer = DependencyInstaller()
+        return installer.install_backend_dependencies(str(self.backend_dir))
 
     def get_available_port(
         self,
@@ -327,7 +469,8 @@ class BackendStarter:
         Get the current status of the backend service configuration.
 
         Provides a summary of the backend service configuration including
-        paths, port configuration, and environment file status.
+        paths, port configuration, environment file status, and virtual
+        environment information.
 
         Returns:
             Dictionary containing status information with keys:
@@ -340,6 +483,10 @@ class BackendStarter:
             - env_exists: Whether .env file exists
             - env_example_exists: Whether .env.example exists
             - host: The configured host address
+            - python_path: The Python executable path
+            - venv_path: The virtual environment directory path (or None)
+            - in_venv: Whether currently running in a virtual environment
+            - venv_python_path: The venv Python executable path (or None)
 
         Examples:
             >>> starter = BackendStarter()
@@ -348,6 +495,8 @@ class BackendStarter:
             Env file exists: True
             >>> print(f"Default port: {status['default_port']}")
             Default port: 8000
+            >>> print(f"In venv: {status['in_venv']}")
+            In venv: True
         """
         return {
             'project_root': str(self.project_root),
@@ -359,6 +508,10 @@ class BackendStarter:
             'env_exists': self.has_env_file(),
             'env_example_exists': self.has_env_example(),
             'host': self.get_host(),
+            'python_path': str(self.python_path),
+            'venv_path': str(self.venv_path) if self.venv_path else None,
+            'in_venv': self.is_in_venv(),
+            'venv_python_path': str(self.get_venv_python_path()) if self.get_venv_python_path() else None,
         }
 
 
